@@ -40,6 +40,17 @@ body {
     z-index: 10;
 }
 
+#highScore {
+    position: absolute;
+    top: 40px;
+    left: 10px;
+    font-size: 16px;
+    font-weight: bold;
+    color: #ffd700;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+    z-index: 10;
+}
+
 #startScreen, #gameOver {
     position: absolute;
     top: 50%;
