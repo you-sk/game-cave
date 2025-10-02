@@ -362,4 +362,8 @@ document.addEventListener('keyup', (e) => {
 startBtn.addEventListener('click', startGame);
 restartBtn.addEventListener('click', startGame);
 
+// 初回起動時にハイスコアを読み込んで表示
+loadHighScore();
+highScoreElement.textContent = Math.floor(highScore);
+
 gameLoop();
