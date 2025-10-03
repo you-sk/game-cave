@@ -17,6 +17,16 @@ let score = 0;
 let scrollSpeed = 2;
 let speedIncreaseTimer = 0;
 let highScore = 0;
+let collectedCoins = 0;
+
+// アイテム効果の状態管理
+let activeEffects = {
+    shield: false,
+    speedDown: false,
+    speedDownTimer: 0,
+    scoreMultiplier: 1,
+    scoreMultiplierTimer: 0
+};
 
 const player = {
     x: canvas.width / 2,
@@ -132,9 +142,20 @@ function initGame() {
     score = 0;
     scrollSpeed = 2;
     speedIncreaseTimer = 0;
+    collectedCoins = 0;
     player.x = canvas.width / 2;
     player.y = canvas.height - 100;
     caveSegments = [];
+    items = [];
+
+    // アイテム効果のリセット
+    activeEffects = {
+        shield: false,
+        speedDown: false,
+        speedDownTimer: 0,
+        scoreMultiplier: 1,
+        scoreMultiplierTimer: 0
+    };
 
     // 画面上部より上から始まるセグメントを生成
     let prevSegment = null;
@@ -166,30 +187,112 @@ function handleInput() {
     }
 }
 
+function spawnItem() {
+    // アイテムの出現確率を調整
+    if (Math.random() < 0.02) { // 2%の確率で生成
+        // 洞窟の通路内にランダムにアイテムを配置
+        const topSegment = caveSegments.reduce((top, seg) =>
+            (!top || seg.y < top.y) ? seg : top, null);
+
+        if (topSegment) {
+            const gapCenter = topSegment.gapX + topSegment.gapWidth / 2;
+            const margin = 30;
+            const x = gapCenter + (Math.random() - 0.5) * (topSegment.gapWidth - margin * 2);
+            const y = topSegment.y - 20;
+
+            // アイテムタイプをランダムに選択（確率調整）
+            const rand = Math.random();
+            let type;
+            if (rand < 0.5) {
+                type = 'coin'; // 50%
+            } else if (rand < 0.7) {
+                type = 'shield'; // 20%
+            } else if (rand < 0.85) {
+                type = 'speedDown'; // 15%
+            } else {
+                type = 'scoreMultiplier'; // 15%
+            }
+
+            items.push(new Item(x, y, type));
+        }
+    }
+}
+
 function updateGame() {
     if (!gameRunning) return;
-    
+
     handleInput();
-    
-    score += scrollSpeed * 0.1;
+
+    // スコア倍率を適用
+    score += scrollSpeed * 0.1 * activeEffects.scoreMultiplier;
     updateScore();
-    
+
+    // スピードダウン効果の管理
+    let currentScrollSpeed = scrollSpeed;
+    if (activeEffects.speedDown) {
+        currentScrollSpeed = scrollSpeed * 0.5;
+        activeEffects.speedDownTimer--;
+        if (activeEffects.speedDownTimer <= 0) {
+            activeEffects.speedDown = false;
+        }
+    }
+
+    // スコア倍率効果の管理
+    if (activeEffects.scoreMultiplier > 1) {
+        activeEffects.scoreMultiplierTimer--;
+        if (activeEffects.scoreMultiplierTimer <= 0) {
+            activeEffects.scoreMultiplier = 1;
+        }
+    }
+
     speedIncreaseTimer++;
     if (speedIncreaseTimer > 300) {
         scrollSpeed = Math.min(scrollSpeed + 0.2, 8);
         speedIncreaseTimer = 0;
     }
-    
+
     caveSegments.forEach(segment => segment.update());
-    
+
+    // アイテムの更新と画面外のアイテムを削除
+    items.forEach(item => item.update());
+    items = items.filter(item => !item.collected && item.y < canvas.height + 50);
+
+    // 新しいアイテムの生成
+    spawnItem();
+
+    // アイテムの衝突判定
+    for (let item of items) {
+        if (!item.collected && item.checkCollision(player)) {
+            item.collected = true;
+
+            switch(item.type) {
+                case 'coin':
+                    collectedCoins++;
+                    score += 50; // ボーナススコア
+                    break;
+                case 'shield':
+                    activeEffects.shield = true;
+                    break;
+                case 'speedDown':
+                    activeEffects.speedDown = true;
+                    activeEffects.speedDownTimer = 300; // 5秒（60FPS × 5）
+                    break;
+                case 'scoreMultiplier':
+                    activeEffects.scoreMultiplier = 2;
+                    activeEffects.scoreMultiplierTimer = 600; // 10秒
+                    break;
+            }
+        }
+    }
+
     // 画面下から出たセグメントを削除
     caveSegments = caveSegments.filter(segment => segment.y < canvas.height + 50);
-    
+
     // 新しいセグメントを上部に追加
     while (caveSegments.length < 20) {
         let topSegment = null;
         let minY = 0;
-        
+
         // 最も上にあるセグメントを探す
         for (let segment of caveSegments) {
             if (topSegment === null || segment.y < minY) {
@@ -197,7 +300,7 @@ function updateGame() {
                 minY = segment.y;
             }
         }
-        
+
         if (topSegment) {
             const newSegment = new CaveSegment(minY - 40, topSegment);
             caveSegments.push(newSegment);
@@ -206,11 +309,16 @@ function updateGame() {
             caveSegments.push(new CaveSegment(-40, null));
         }
     }
-    
+
+    // 壁との衝突判定（シールドがある場合は無効化）
     for (let segment of caveSegments) {
         if (segment.checkCollision(player)) {
-            gameOver();
-            return;
+            if (activeEffects.shield) {
+                activeEffects.shield = false; // シールドを消費
+            } else {
+                gameOver();
+                return;
+            }
         }
     }
 }
@@ -243,6 +351,127 @@ class Particle {
     }
 }
 
+// アイテムクラス
+class Item {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'coin', 'shield', 'speedDown', 'scoreMultiplier'
+        this.radius = 10;
+        this.collected = false;
+        this.angle = 0; // アニメーション用
+    }
+
+    update() {
+        this.y += scrollSpeed;
+        this.angle += 0.1;
+    }
+
+    draw(ctx) {
+        if (this.collected) return;
+
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+
+        switch(this.type) {
+            case 'coin':
+                // 金色のコイン
+                const coinGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.radius);
+                coinGradient.addColorStop(0, '#ffd700');
+                coinGradient.addColorStop(0.5, '#ffed4e');
+                coinGradient.addColorStop(1, '#ffa500');
+                ctx.fillStyle = coinGradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // コインの輝き
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#ffd700';
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                break;
+
+            case 'shield':
+                // 青いシールド
+                const shieldGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.radius);
+                shieldGradient.addColorStop(0, '#4dd0e1');
+                shieldGradient.addColorStop(0.5, '#00bcd4');
+                shieldGradient.addColorStop(1, '#0097a7');
+                ctx.fillStyle = shieldGradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // シールドマーク
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, -6);
+                ctx.lineTo(-5, 0);
+                ctx.lineTo(0, 6);
+                ctx.lineTo(5, 0);
+                ctx.closePath();
+                ctx.stroke();
+                break;
+
+            case 'speedDown':
+                // 緑色のスピードダウン
+                const speedGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.radius);
+                speedGradient.addColorStop(0, '#81c784');
+                speedGradient.addColorStop(0.5, '#66bb6a');
+                speedGradient.addColorStop(1, '#4caf50');
+                ctx.fillStyle = speedGradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 下向き矢印
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.moveTo(0, 4);
+                ctx.lineTo(-4, -2);
+                ctx.lineTo(4, -2);
+                ctx.closePath();
+                ctx.fill();
+                break;
+
+            case 'scoreMultiplier':
+                // 紫色のスコア倍率
+                const scoreGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.radius);
+                scoreGradient.addColorStop(0, '#ba68c8');
+                scoreGradient.addColorStop(0.5, '#ab47bc');
+                scoreGradient.addColorStop(1, '#9c27b0');
+                ctx.fillStyle = scoreGradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // x2マーク
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 10px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('x2', 0, 0);
+                break;
+        }
+
+        ctx.restore();
+    }
+
+    checkCollision(player) {
+        const dx = this.x - player.x;
+        const dy = this.y - player.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        return distance < this.radius + player.radius;
+    }
+}
+
+let items = [];
+
 function drawGame() {
     // 深度に応じて背景色を変化
     const depth = Math.floor(score / 100);
@@ -267,6 +496,9 @@ function drawGame() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     caveSegments.forEach(segment => segment.draw());
+
+    // アイテムの描画
+    items.forEach(item => item.draw(ctx));
 
     // パーティクルの更新と描画
     if (gameRunning && Math.random() < 0.3) {
@@ -300,6 +532,50 @@ function drawGame() {
     ctx.beginPath();
     ctx.arc(player.x, player.y, 25, 0, Math.PI * 2);
     ctx.fill();
+
+    // シールド効果の表示
+    if (activeEffects.shield) {
+        ctx.strokeStyle = '#00bcd4';
+        ctx.lineWidth = 3;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#00bcd4';
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.radius + 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+
+    // アクティブなエフェクトの表示（画面右上）
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px Arial';
+    ctx.textAlign = 'right';
+    let effectY = 40;
+
+    if (activeEffects.speedDown) {
+        const seconds = Math.ceil(activeEffects.speedDownTimer / 60);
+        ctx.fillStyle = '#66bb6a';
+        ctx.fillText(`スピードダウン: ${seconds}s`, canvas.width - 10, effectY);
+        effectY += 20;
+    }
+
+    if (activeEffects.scoreMultiplier > 1) {
+        const seconds = Math.ceil(activeEffects.scoreMultiplierTimer / 60);
+        ctx.fillStyle = '#ab47bc';
+        ctx.fillText(`スコア x${activeEffects.scoreMultiplier}: ${seconds}s`, canvas.width - 10, effectY);
+        effectY += 20;
+    }
+
+    if (activeEffects.shield) {
+        ctx.fillStyle = '#00bcd4';
+        ctx.fillText('シールド有効', canvas.width - 10, effectY);
+    }
+
+    // コイン収集数の表示
+    ctx.fillStyle = '#ffd700';
+    ctx.textAlign = 'left';
+    ctx.fillText(`コイン: ${collectedCoins}`, 10, 40);
+
+    ctx.textAlign = 'start';
 }
 
 function gameLoop() {
