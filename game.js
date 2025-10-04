@@ -633,6 +633,13 @@ document.addEventListener('keyup', (e) => {
         keys.space = false;
         e.preventDefault();
     }
+    if (e.key === 'Enter') {
+        // スタート画面またはゲームオーバー画面が表示されている場合にゲーム開始
+        if (!gameRunning) {
+            startGame();
+        }
+        e.preventDefault();
+    }
 });
 
 startBtn.addEventListener('click', startGame);
